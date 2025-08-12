@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Comms Prototype — Multi-country Feeds</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:18px;background:#f7f7f9;color:#111}
+    header{display:flex;gap:12px;align-items:center}
+    .card{background:white;padding:12px;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.05);margin-top:12px}
+    #feed{margin-top:12px}
+    .post{border-bottom:1px solid #eee;padding:10px 0}
+    .post:last-child{border-bottom:0}
+    .meta{font-size:0.9rem;color:#555}
+    textarea{width:100%;min-height:70px;padding:8px}
+    input,select,button,textarea{font-size:1rem}
+    button{padding:8px 10px;border-radius:6px;border:1px solid #d0d0d0;background:#fff}
+    .btn-primary{background:#1a73e8;color:white;border:0}
+    .admin-badge{background:#111;color:#fff;padding:2px 6px;border-radius:6px;font-size:0.8rem}
+    .small{font-size:0.9rem;color:#444}
+  </style>
+  <!-- Firebase v8 CDN (simple to use in a single-file prototype) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+</head>
+<body>
+  <header>
+    <h2>Comms Prototype</h2>
+    <div id="user-info" style="margin-left:auto"></div>
+  </header>
+
+  <div class="card">
+    <h3>App controls</h3>
+    <div id="auth-box">
+      <input id="email" placeholder="email" />
+      <input id="password" placeholder="password" type="password" />
+      <input id="displayName" placeholder="display name (Billy Bob III)" />
+      <input id="countryInput" placeholder="your country (Kinayak)" />
+      <button onclick="signUp()" class="btn-primary">Sign up</button>
+      <button onclick="signIn()">Sign in</button>
+      <button onclick="signOut()">Sign out</button>
+    </div>
+
+    <div id="admin-controls" style="display:none;margin-top:10px">
+      <label class="small">Admin mode: </label>
+      <button onclick="toggleAdminView()">Toggle global view</button>
+      <input id="renameFrom" placeholder="from network id (old)" />
+      <input id="renameTo" placeholder="to network id (new)" />
+      <button onclick="renameNetwork()">Rename network (admin)</button>
+    </div>
+
+    <div style="margin-top:8px">
+      <label>Open a network (comms page). This controls which network's feed is shown below.</label>
+      <br>
+      <input id="networkInput" placeholder="network id (angekyopsuy)" style="width:240px" />
+      <button onclick="openNetwork()">Open network</button>
+    </div>
+  </div>
+
+  <div class="card" id="composer" style="display:none">
+    <div style="display:flex;gap:8px;align-items:center">
+      <div><strong id="composer-network">Network:</strong></div>
+      <div id="composer-net-badge" class="small"></div>
+      <div id="composer-priv" style="margin-left:auto"></div>
+    </div>
+
+    <div style="margin-top:10px">
+      <input id="postAuthor" placeholder="make up an author name (e.g., Exec. Zorg)" style="width:45%"/>
+      <select id="statusSelect">
+        <option value="public">Public</option>
+        <option value="private">Private</option>
+        <option value="draft">Draft</option>
+      </select>
+    </div>
+
+    <div style="margin-top:10px">
+      <textarea id="postText" placeholder="Write your mock post..."></textarea>
+    </div>
+
+    <div style="margin-top:8px">
+      <button class="btn-primary" onclick="createPost()">Post</button>
+      <button onclick="clearComposer()">Clear</button>
+    </div>
+  </div>
+
+  <div id="feed" class="card">
+    <h3>Feed</h3>
+    <div id="feed-list">Open a network to see posts.</div>
+  </div>
+
+  <script>
+    // =========== FIREBASE CONFIG - paste your config here ===========
+    const firebaseConfig = {
+        apiKey: "AIzaSyDiI2eN3SyqpYdHt7gVPDvuzjkcOTpbvvc",
+        authDomain: "callistal-comms.firebaseapp.com",
+        projectId: "callistal-comms",
+        storageBucket: "callistal-comms.firebasestorage.app",
+        messagingSenderId: "406050325634",
+        appId: "1:406050325634:web:08446a63e17e1c1727609b",
+        measurementId: "G-L4K76H6351"
+    };
+    // =================================================================
+
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    // Local app state
+    let currentNetwork = null; // e.g. 'angekyopsuy'
+    let currentUser = null;    // firebase user object
+    let userProfile = null;    // custom profile {displayName, country}
+    let adminMode = false;     // when admin toggles global view
+    let isAdmin = false;       // true if uid is in 'admins' collection
+
+    // Sign up: create account and set a profile doc with country & displayName
+    async function signUp(){
+      const email = document.getElementById('email').value.trim();
+      const pw = document.getElementById('password').value;
+      const displayName = document.getElementById('displayName').value.trim();
+      const country = document.getElementById('countryInput').value.trim().toLowerCase();
+      if(!email||!pw||!displayName||!country){alert('email, password, display name and country required');return}
+      try{
+        const cred = await auth.createUserWithEmailAndPassword(email,pw);
+        const uid = cred.user.uid;
+        // Save profile in Firestore under users collection
+        await db.collection('users').doc(uid).set({displayName, country});
+        alert('Account created. Signed in.');
+      }catch(e){alert(e.message)}
+    }
+
+    async function signIn(){
+      const email = document.getElementById('email').value.trim();
+      const pw = document.getElementById('password').value;
+      try{
+        await auth.signInWithEmailAndPassword(email,pw);
+      }catch(e){alert(e.message)}
+    }
+
+    function signOut(){auth.signOut();}
+
+    // Listen for auth state changes
+    auth.onAuthStateChanged(async user=>{
+      currentUser = user;
+      if(user){
+        // load profile
+        const pDoc = await db.collection('users').doc(user.uid).get();
+        if(pDoc.exists) userProfile = pDoc.data();
+        else userProfile = {displayName: user.email.split('@')[0], country: ''};
+
+        // check admin
+        const adminDoc = await db.collection('admins').doc(user.uid).get();
+        isAdmin = adminDoc.exists;
+
+        document.getElementById('user-info').innerHTML = `${userProfile.displayName} <span class=\"small\">(${userProfile.country||'no-country'})</span>` + (isAdmin? ' <span class="admin-badge">ADMIN</span>': '');
+        document.getElementById('auth-box').style.display='none';
+        document.getElementById('composer').style.display = currentNetwork? 'block':'none';
+        document.getElementById('admin-controls').style.display = isAdmin? 'block':'none';
+
+      } else {
+        currentUser=null;userProfile=null;isAdmin=false;
+        document.getElementById('user-info').innerHTML='';
+        document.getElementById('auth-box').style.display='block';
+        document.getElementById('composer').style.display='none';
+        document.getElementById('admin-controls').style.display='none';
+      }
+      // reload feed to update visibility
+      if(currentNetwork) subscribeToFeed(currentNetwork);
+    });
+
+    // Open a network
+    function openNetwork(){
+      const net = document.getElementById('networkInput').value.trim().toLowerCase();
+      if(!net){alert('Enter a network id');return}
+      currentNetwork = net;
+      document.getElementById('composer-network').textContent = 'Network: ' + net;
+      document.getElementById('composer-net-badge').textContent = '';
+      document.getElementById('composer').style.display = 'block';
+      // show composer private hint
+      if(userProfile && (userProfile.country.toLowerCase() === net || isAdmin)){
+        document.getElementById('composer-priv').innerHTML = '<span class="small">You can post/edit here</span>';
+        document.getElementById('postAuthor').value = userProfile.displayName;
+      } else {
+        document.getElementById('composer-priv').innerHTML = '<span class="small">View-only: not your country</span>';
+      }
+      // subscribe
+      subscribeToFeed(net);
+    }
+
+    // Subscribe to feed updates (realtime snapshot)
+    let unsubscribe = null;
+    function subscribeToFeed(network){
+      if(unsubscribe) unsubscribe();
+      const q = db.collection('posts').where('network','==',network).orderBy('timestamp','desc');
+      unsubscribe = q.onSnapshot(snap=>{
+        renderFeed(snap.docs);
+      });
+    }
+
+    // Utility: format timestamp
+    function fmtTs(ts){if(!ts) return '';
+      const d = ts.toDate(); return d.toLocaleString();
+    }
+
+    // Render feed: takes array of docs
+    function renderFeed(docs){
+      const feed = document.getElementById('feed-list');
+      if(!docs.length){feed.innerHTML = '<p class="small">No posts yet.</p>'; return}
+      let html = '';
+      docs.forEach(doc=>{
+        const data = doc.data();
+        const canSee = (data.status==='public') || (currentUser && (data.authorUid === currentUser.uid)) || isAdmin;
+        if(!canSee) return; // skip private posts
+        const canEdit = isAdmin || (currentUser && data.authorUid === currentUser.uid) || (userProfile && userProfile.country && userProfile.country.toLowerCase() === data.network && currentUser && userProfile.country.toLowerCase() === data.network);
+        // Determine if current user belongs to network country (simple rule: user's country === network name)
+        const editButtons = canEdit ? `
+          <button onclick="enterEditMode('${doc.id}')">Edit</button>
+          <button onclick="deletePost('${doc.id}')">Delete</button>
+          <button onclick="toggleStatus('${doc.id}','${data.status}')">Toggle pub/priv</button>` : '';
+
+        html += `<div class=\"post\" id=\"post-${doc.id}\">`+
+                `<div style=\"display:flex;gap:8px;align-items:center\">`+
+                `<strong>${escapeHtml(data.authorName||data.author)}</strong>`+
+                `<div class=\"meta\">&nbsp;•&nbsp;${escapeHtml(data.network)}${data.status!=='public'? ' • '+data.status.toUpperCase() : ''}</div>`+
+                `<div style=\"margin-left:auto;\">${fmtTs(data.timestamp)}</div>`+
+                `</div>`+
+                `<div style=\"margin-top:6px\" id=\"content-${doc.id}\">${escapeHtml(data.content)}</div>`+
+                `<div style=\"margin-top:6px\">${editButtons}</div>`+
+                `</div>`;
+      });
+      feed.innerHTML = html;
+    }
+
+    // Create post (restricted)
+    async function createPost(){
+      if(!currentNetwork){alert('Open a network first');return}
+      if(!currentUser){alert('Sign in to post');return}
+      // Only allow posting if the user's saved country matches the network OR the user is admin
+      const canPost = isAdmin || (userProfile && userProfile.country && userProfile.country.toLowerCase() === currentNetwork.toLowerCase());
+      if(!canPost){alert('You are not permitted to post on this network');return}
+      const content = document.getElementById('postText').value.trim();
+      const authorName = document.getElementById('postAuthor').value.trim() || userProfile.displayName;
+      const status = document.getElementById('statusSelect').value;
+      if(!content){alert('Empty post');return}
+      try{
+        await db.collection('posts').add({
+          network: currentNetwork.toLowerCase(),
+          authorName,
+          authorUid: currentUser.uid,
+          content,
+          status,
+          timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        clearComposer();
+      }catch(e){alert(e.message)}
+    }
+
+    function clearComposer(){document.getElementById('postText').value='';}
+
+    // Edit flow: enter edit mode (replace content with textarea)
+    async function enterEditMode(docId){
+      const docRef = db.collection('posts').doc(docId);
+      const doc = await docRef.get();
+      if(!doc.exists){alert('Post not found');return}
+      const data = doc.data();
+      // permissions: admin or author
+      if(!(isAdmin || (currentUser && data.authorUid === currentUser.uid))){alert('Not allowed to edit');return}
+      const contentDiv = document.getElementById('content-'+docId);
+      contentDiv.innerHTML = `<textarea id=\"editarea-${docId}\">${escapeHtml(data.content)}</textarea><div style=\"margin-top:6px\"><button onclick=\"saveEdit('`+docId+`')\">Save</button> <button onclick=\"cancelEdit('`+docId+`','`+escapeForJS(data.content)+`')\">Cancel</button></div>`;
+    }
+
+    async function saveEdit(docId){
+      const area = document.getElementById('editarea-'+docId);
+      if(!area) return;
+      const newText = area.value.trim();
+      try{
+        await db.collection('posts').doc(docId).update({content:newText, editedAt: firebase.firestore.FieldValue.serverTimestamp()});
+      }catch(e){alert(e.message)}
+    }
+
+    function cancelEdit(docId, orig){
+      const contentDiv = document.getElementById('content-'+docId);
+      contentDiv.textContent = orig;
+    }
+
+    async function deletePost(docId){
+      if(!confirm('Delete this post?')) return;
+      try{await db.collection('posts').doc(docId).delete();}catch(e){alert(e.message)}
+    }
+
+    // Toggle status between public/private (admin or author)
+    async function toggleStatus(docId, currentStatus){
+      if(!currentUser && !isAdmin) return alert('Not allowed');
+      const doc = await db.collection('posts').doc(docId).get();
+      if(!doc.exists) return;
+      const data = doc.data();
+      if(!(isAdmin || (currentUser && data.authorUid === currentUser.uid))) return alert('Not allowed');
+      const next = currentStatus === 'public' ? 'private' : 'public';
+      try{await db.collection('posts').doc(docId).update({status: next});}catch(e){alert(e.message)}
+    }
+
+    // Admin: toggle global view
+    function toggleAdminView(){
+      if(!isAdmin) return alert('Admin only');
+      adminMode = !adminMode;
+      if(adminMode){
+        // unsubscribe then subscribe to all posts
+        if(unsubscribe) unsubscribe();
+        unsubscribe = db.collection('posts').orderBy('timestamp','desc').onSnapshot(snap=>renderFeed(snap.docs));
+        alert('Admin global view enabled');
+      } else {
+        // return to network-specific feed
+        if(unsubscribe) unsubscribe();
+        if(currentNetwork) subscribeToFeed(currentNetwork);
+        alert('Admin global view disabled');
+      }
+    }
+
+    // Admin: rename network by batch updating network field
+    async function renameNetwork(){
+      if(!isAdmin) return alert('Admin only');
+      const from = document.getElementById('renameFrom').value.trim().toLowerCase();
+      const to = document.getElementById('renameTo').value.trim().toLowerCase();
+      if(!from||!to) return alert('Enter both ids');
+      if(!confirm(`Change all posts from "${from}" -> "${to}"?`)) return;
+      // Query all posts with network==from. Then batch update in chunks.
+      const q = await db.collection('posts').where('network','==',from).get();
+      if(q.empty) return alert('No posts found for that network');
+      const batch = db.batch();
+      q.docs.forEach(d=>{batch.update(d.ref,{network:to})});
+      try{await batch.commit(); alert('Rename complete');}
+      catch(e){alert(e.message)}
+    }
+
+    // Escape helpers
+    function escapeHtml(s){ if(!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function escapeForJS(s){ if(!s) return ''; return s.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,''); }
+
+    // Initial: optionally open example network
+    //currentNetwork = 'angekyopsuy';
+    //subscribeToFeed(currentNetwork);
+
+  </script>
+</body>
+</html>
