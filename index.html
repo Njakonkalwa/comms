@@ -236,7 +236,8 @@
       if(!currentNetwork){alert('Open a network first');return}
       if(!currentUser){alert('Sign in to post');return}
       // Only allow posting if the user's saved country matches the network OR the user is admin
-      const canPost = isAdmin || (userProfile && userProfile.country && userProfile.country.toLowerCase() === currentNetwork.toLowerCase());
+      const adminUID = "QJ9d8Vwx9AdP0drRaujfWM98c4W2"; // your admin account UID
+      const canPost = isAdmin || (auth.currentUser && auth.currentUser.uid === adminUID) || (userProfile && userProfile.country && userProfile.country.toLowerCase() === currentNetwork.toLowerCase());
       if(!canPost){alert('You are not permitted to post on this network');return}
       const content = document.getElementById('postText').value.trim();
       const authorName = document.getElementById('postAuthor').value.trim() || userProfile.displayName;
